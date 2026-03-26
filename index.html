@@ -749,35 +749,35 @@
                 playerList.innerHTML = "";
 
                 d.players.forEach(p => {
-                    let li = document.createElement("li");
-                    let txt = `${p.name} (${p.chips}) Bet:${p.bet || 0}`;
+                    let div = document.createElement("div");
+
+                    div.style = `
+        background:#1f2937;
+        padding:10px;
+        border-radius:10px;
+        min-width:120px;
+        text-align:center;
+        border:${p.uid === currentUser.uid ? "2px solid gold" : "1px solid #555"};
+    `;
+
+                    let txt = `<b>${p.name}</b><br>
+               💰 ${p.chips}<br>
+               Bet: ${p.bet || 0}<br>`;
 
                     if (p.hand) {
-                        txt += " | " + p.hand.map(renderCard).join(" ");
+                        txt += p.hand.map(renderCard).join(" ");
                     }
 
-                    // WinRate เฉพาะตัวเอง
-                    if (
-                        p.uid === currentUser.uid &&
-                        p.hand &&
-                        d.community &&
-                        d.community.length > 0
-                    ) {
-                        let percent = simulateWinRate(
-                            p.hand,
-                            d.community,
-                            d.players.length - 1,
-                            150
-                        );
-
-                        let color = percent > 60 ? "lime" : percent > 40 ? "orange" : "red";
-                        txt += ` | <span style="color:${color}">Win: ${percent}%</span>`;
+                    if (p.allIn) {
+                        txt += "<br><span style='color:orange'>ALL-IN</span>";
                     }
 
-                    if (p.folded) txt += " ❌";
+                    if (p.folded) {
+                        txt += "<br>❌";
+                    }
 
-                    li.innerHTML = txt;
-                    playerList.appendChild(li);
+                    div.innerHTML = txt;
+                    playerList.appendChild(div);
                 });
 
                 communityEl.innerHTML = "Community: " +
