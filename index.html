@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Poker Game</title>
+</head>
+
+<body>
+    <h1>Poker Game</h1>
+    <p id="status"></p>
+
+    <button id="createRoom">Create Room</button>
+    <p id="roomId"></p>
+
+    <input id="joinRoomInput" placeholder="Room ID">
+    <button id="joinRoom">Join Room</button>
+
+    <hr>
+
+    <h3>Players</h3>
+    <ul id="playerList"></ul>
+
+    <h3 id="community"></h3>
+
+    <p id="potDisplay"></p>
+    <p id="turnStatus"></p>
+
+    <button id="startGame">Start Game</button>
+    <button id="nextPhase">Next Phase</button>
+
+    <hr>
+
+    <button id="callBtn">Call</button>
+    <input id="raiseAmount" type="number" placeholder="Raise">
+    <button id="raiseBtn">Raise</button>
+    <button id="foldBtn">Fold</button>
+
+    <hr>
+    <button id="showdown">Showdown</button>
+    <p id="result"></p>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import {
+            getFirestore, doc, setDoc, getDoc, updateDoc,
+            arrayUnion, onSnapshot, serverTimestamp
+        } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAYE4YMveh4aqdo7chZ_rQJb93w9jUSoVQ",
+            authDomain: "poker-myfriend.firebaseapp.com",
+            projectId: "poker-myfriend",
+            storageBucket: "poker-myfriend.firebasestorage.app",
+            messagingSenderId: "281914430683",
+            appId: "1:281914430683:web:784cd01a934e132440a8fe"
+        };
+
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // ================= UI =================
+        const status = document.getElementById("status");
+        const roomIdText = document.getElementById("roomId");
+        const playerList = document.getElementById("playerList");
+        const communityEl = document.getElementById("community");
+        const potDisplay = document.getElementById("potDisplay");
+        const turnStatus = document.getElementById("turnStatus");
+
+        const createRoomBtn = document.getElementById("createRoom");
+        const joinRoomBtn = document.getElementById("joinRoom");
+        const joinRoomInput = document.getElementById("joinRoomInput");
+
+        const startGameBtn = document.getElementById("startGame");
+        const nextPhaseBtn = document.getElementById("nextPhase");
+
+        const callBtn = document.getElementById("callBtn");
+        const raiseBtn = document.getElementById("raiseBtn");
+        const foldBtn = document.getElementById("foldBtn");
+        const raiseAmount = document.getElementById("raiseAmount");
+
+        const showdownBtn = document.getElementById("showdown");
+
+        // ================= STATE =================
+        let currentUser = null;
+        let currentRoomId = null;
+
+        signInAnonymously(auth).then(res => {
+            currentUser = res.user;
+            status.innerText = "UID: " + currentUser.uid;
+        });
+
+        // ================= UTILS =================
+        function genRoom() {
+            return Math.random().toString(36).substring(2, 8).toUpperCase();
+        }
+
+        function nextTurn(players, current) {
+            let next = current;
+            let count = 0;
+
+            do {
+                next = (next + 1) % players.length;
+                count++;
+                if (count > players.length) return -1;
+
+            } while (players[next].folded);
+
+            return next;
+        }
+
+        // ================= ROOM =================
+        createRoomBtn.onclick = async () => {
+            const id = genRoom();
+
+            await setDoc(doc(db, "rooms", id), {
+                createdAt: serverTimestamp(),
+                owner: currentUser.uid,
+                players: [{
+                    uid: currentUser.uid,
+                    name: "Host",
+                    chips: 1000
+                }],
+                state: "waiting",
+                startingChips: 1000,
+                smallBlind: 10,
+                bigBlind: 20,
+                dealerIndex: 0
+            });
+
+            currentRoomId = id;
+            roomIdText.innerText = id;
+            listen(id);
+        };
+
+        joinRoomBtn.onclick = async () => {
+            const id = joinRoomInput.value;
+            const ref = doc(db, "rooms", id);
+            const snap = await getDoc(ref);
+
+            if (!snap.exists()) return alert("Room not found");
+
+            const data = snap.data();
+
+            await updateDoc(ref, {
+                players: arrayUnion({
+                    uid: currentUser.uid,
+                    name: "Player",
+                    chips: data.startingChips
+                })
+            });
+
+            currentRoomId = id;
+            listen(id);
+        };
+
+        // ================= สร้างสำรับไพ่ =================
+        function createDeck() {
+            const s = ["H", "D", "C", "S"];
+            const v = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
+            let d = [];
+            s.forEach(x => v.forEach(y => d.push(y + x)));
+            return d;
+        }
+
+        function shuffle(d) {
+            for (let i = d.length - 1; i > 0; i--) {
+                let j = Math.floor(Math.random() * (i + 1));
+                [d[i], d[j]] = [d[j], d[i]];
+            }
+        }
+
+        startGameBtn.onclick = async () => {
+            let ref = doc(db, "rooms", currentRoomId);
+            let data = (await getDoc(ref)).data();
+
+            let deck = createDeck(); shuffle(deck);
+
+            let players = data.players.map(p => ({
+                ...p,
+                folded: false,
+                bet: 0,
+                hand: [deck.pop(), deck.pop()]
+            }));
+
+            let dealer = data.dealerIndex || 0;
+            let sb = (dealer + 1) % players.length;
+            let bb = (dealer + 2) % players.length;
+
+            players[sb].chips -= data.smallBlind;
+            players[sb].bet = data.smallBlind;
+
+            players[bb].chips -= data.bigBlind;
+            players[bb].bet = data.bigBlind;
+
+            await updateDoc(ref, {
+                players,
+                deck,
+                community: [],
+                pot: data.smallBlind + data.bigBlind,
+                currentBet: data.bigBlind,
+                turnIndex: (bb + 1) % players.length,
+                phase: "preflop"
+            });
+        };
+
+        nextPhaseBtn.onclick = async () => {
+            let ref = doc(db, "rooms", currentRoomId);
+            let data = (await getDoc(ref)).data();
+
+            let deck = [...data.deck];
+            let community = [...(data.community || [])];
+            let phase = data.phase;
+
+            if (phase === "preflop") {
+                community.push(deck.pop(), deck.pop(), deck.pop());
+                phase = "flop";
+            } else if (phase === "flop") {
+                community.push(deck.pop());
+                phase = "turn";
+            } else if (phase === "turn") {
+                community.push(deck.pop());
+                phase = "river";
+            } else {
+                phase = "showdown";
+            }
+
+            let players = data.players.map(p => ({ ...p, bet: 0 }));
+
+            await updateDoc(ref, {
+                deck, community, phase,
+                players,
+                currentBet: 0,
+                turnIndex: 0
+            });
+        };
+
+        // ================= ACTION =================
+        function isMyTurn(data) {
+            return data.players[data.turnIndex].uid === currentUser.uid;
+        }
+
+        callBtn.onclick = async () => {
+            let ref = doc(db, "rooms", currentRoomId);
+            let data = (await getDoc(ref)).data();
+            if (!isMyTurn(data)) return alert("ยังไม่ถึงตา");
+
+            let players = [...data.players];
+            let p = players[data.turnIndex];
+
+            let need = data.currentBet - (p.bet || 0);
+            if (need > p.chips) return alert("ชิปไม่พอ");
+
+            p.chips -= need;
+            p.bet += need;
+
+            await updateDoc(ref, {
+                players,
+                pot: data.pot + need,
+                turnIndex: nextTurn(players, data.turnIndex)
+            });
+        };
+
+        raiseBtn.onclick = async () => {
+            let amt = parseInt(raiseAmount.value);
+            if (!amt || amt <= 0) return alert("Invalid raise");
+
+            let ref = doc(db, "rooms", currentRoomId);
+            let data = (await getDoc(ref)).data();
+            if (!isMyTurn(data)) return alert("ยังไม่ถึงตา");
+
+            let players = [...data.players];
+            let p = players[data.turnIndex];
+
+            let need = data.currentBet - (p.bet || 0);
+            let total = need + amt;
+
+            if (total > p.chips) return alert("ชิปไม่พอ");
+
+            p.chips -= total;
+            p.bet += total;
+
+            await updateDoc(ref, {
+                players,
+                pot: data.pot + total,
+                currentBet: p.bet,
+                turnIndex: nextTurn(players, data.turnIndex)
+            });
+        };
+
+        foldBtn.onclick = async () => {
+            let ref = doc(db, "rooms", currentRoomId);
+            let data = (await getDoc(ref)).data();
+
+            let players = [...data.players];
+            players[data.turnIndex].folded = true;
+
+            await updateDoc(ref, {
+                players,
+                turnIndex: nextTurn(players, data.turnIndex)
+            });
+        };
+
+        // ================= HAND EVALUATION =================
+        function cardValue(v) {
+            const map = { J: 11, Q: 12, K: 13, A: 14 };
+            return map[v] || parseInt(v);
+        }
+
+        function evaluateHand(cards) {
+            let values = cards.map(c => cardValue(c.slice(0, -1))).sort((a, b) => b - a);
+            let suits = cards.map(c => c.slice(-1));
+
+            let counts = {};
+            values.forEach(v => counts[v] = (counts[v] || 0) + 1);
+
+            let entries = Object.entries(counts)
+                .map(([v, c]) => ({ v: +v, c }))
+                .sort((a, b) => b.c - a.c || b.v - a.v);
+
+            let isFlush = suits.every(s => s === suits[0]);
+
+            let unique = [...new Set(values)].sort((a, b) => a - b);
+            let isStraight = false, high = 0;
+
+            for (let i = 0; i <= unique.length - 5; i++) {
+                let seq = unique.slice(i, i + 5);
+                if (seq[4] - seq[0] === 4) {
+                    isStraight = true;
+                    high = seq[4];
+                }
+            }
+
+            if ([14, 2, 3, 4, 5].every(v => unique.includes(v))) {
+                isStraight = true;
+                high = 5;
+            }
+
+            let rank = 0, tb = [];
+
+            if (isStraight && isFlush) { rank = 8; tb = [high] }
+            else if (entries[0].c === 4) { rank = 7; tb = [entries[0].v, entries[1].v] }
+            else if (entries[0].c === 3 && entries[1].c === 2) { rank = 6; tb = [entries[0].v, entries[1].v] }
+            else if (isFlush) { rank = 5; tb = values }
+            else if (isStraight) { rank = 4; tb = [high] }
+            else if (entries[0].c === 3) { rank = 3; tb = [entries[0].v, ...values.filter(v => v !== entries[0].v)] }
+            else if (entries[0].c === 2 && entries[1].c === 2) { rank = 2; tb = [entries[0].v, entries[1].v, entries[2].v] }
+            else if (entries[0].c === 2) { rank = 1; tb = [entries[0].v, ...values.filter(v => v !== entries[0].v)] }
+            else { rank = 0; tb = values }
+
+            return { rank, tiebreak: tb };
+        }
+
+        function compareHands(a, b) {
+            if (a.rank !== b.rank) return b.rank - a.rank;
+            for (let i = 0; i < a.tiebreak.length; i++) {
+                if (a.tiebreak[i] !== b.tiebreak[i])
+                    return b.tiebreak[i] - a.tiebreak[i];
+            }
+            return 0;
+        }
+
+        function getCombinations(arr, k) {
+            let res = [];
+            function comb(start, prev) {
+                if (prev.length === k) return res.push(prev);
+                for (let i = start; i < arr.length; i++)
+                    comb(i + 1, [...prev, arr[i]]);
+            }
+            comb(0, []);
+            return res;
+        }
+
+        function bestHand(seven) {
+            let combos = getCombinations(seven, 5);
+            let best = null;
+
+            combos.forEach(c => {
+                let e = evaluateHand(c);
+                if (!best || compareHands(e, best) < 0)
+                    best = { ...e, cards: c };
+            });
+
+            return best;
+        }
+
+        // ================= SHOWDOWN =================
+        showdownBtn.onclick = async () => {
+            let ref = doc(db, "rooms", currentRoomId);
+            let data = (await getDoc(ref)).data();
+
+            let results = [];
+
+            data.players.forEach(p => {
+                if (p.folded) return;
+
+                let best = bestHand([...p.hand, ...data.community]);
+                results.push({ name: p.name, ...best });
+            });
+
+            results.sort(compareHands);
+
+            document.getElementById("result").innerText =
+                "🏆 ผู้ชนะ: " + results[0].name;
+        };
+
+        // ================= LISTENER =================
+        function suit(c) { return { H: "♥", D: "♦", C: "♣", S: "♠" }[c.slice(-1)] }
+
+        function renderCard(c) {
+            let red = ["H", "D"].includes(c.slice(-1));
+            return `<span style="color:${red ? "red" : "black"}">${c.slice(0, -1) + suit(c)}</span>`;
+        }
+
+        function listen(id) {
+            onSnapshot(doc(db, "rooms", id), (snap) => {
+                let d = snap.data();
+                if (!d) return;
+
+                playerList.innerHTML = "";
+
+                d.players.forEach(p => {
+                    let li = document.createElement("li");
+                    let txt = `${p.name} (${p.chips}) Bet:${p.bet || 0}`;
+
+                    if (p.hand) {
+                        txt += " | " + p.hand.map(renderCard).join(" ");
+                    }
+
+                    // WinRate เฉพาะตัวเอง
+                    if (
+                        p.uid === currentUser.uid &&
+                        p.hand &&
+                        d.community &&
+                        d.community.length > 0
+                    ) {
+                        let percent = simulateWinRate(
+                            p.hand,
+                            d.community,
+                            d.players.length - 1,
+                            150
+                        );
+
+                        let color = percent > 60 ? "lime" : percent > 40 ? "orange" : "red";
+                        txt += ` | <span style="color:${color}">Win: ${percent}%</span>`;
+                    }
+
+                    if (p.folded) txt += " ❌";
+
+                    li.innerHTML = txt;
+                    playerList.appendChild(li);
+                });
+
+                communityEl.innerHTML = "Community: " +
+                    (d.community || []).map(renderCard).join(" ");
+
+                potDisplay.innerText = "Pot: " + (d.pot || 0);
+
+                if (d.players && d.turnIndex != null) {
+                    turnStatus.innerText = "Turn: " + d.players[d.turnIndex].name;
+                }
+            });
+        }
+
+        // ================= โอกาสชนะ =================
+        function simulateWinRate(player, community, opponents = 1, sim = 300) {
+            let win = 0;
+
+            for (let i = 0; i < sim; i++) {
+                let deck = createDeck();
+
+                // เอาไพ่ที่ใช้แล้วออก
+                let used = [...player, ...community];
+                deck = deck.filter(c => !used.includes(c));
+
+                shuffle(deck);
+
+                // แจก opponent
+                let oppHands = [];
+                for (let j = 0; j < opponents; j++) {
+                    oppHands.push([deck.pop(), deck.pop()]);
+                }
+
+                // เติม community ให้ครบ 5
+                let comm = [...community];
+                while (comm.length < 5) {
+                    comm.push(deck.pop());
+                }
+
+                let myBest = bestHand([...player, ...comm]);
+
+                let lose = false;
+
+                for (let h of oppHands) {
+                    let oppBest = bestHand([...h, ...comm]);
+
+                    if (compareHands(oppBest, myBest) < 0) {
+                        lose = true;
+                        break;
+                    }
+                }
+
+                if (!lose) win++;
+            }
+
+            return Math.round((win / sim) * 100);
+        }
+
+        //Test Hand Evaluation//
+        // let test = bestHand([
+        //     "AH", "KH", "QH", "JH", "10H", "2C", "3D"
+        // ]);
+        // let ggghhh = bestHand(["AH", "AD", "AC", "AS", "2H", "3D", "4C"]);
+        // let hhhggg = bestHand(["KH", "KD", "KC", "KS", "AH", "2D", "3C"]);
+
+        // console.log(compareHands(ggghhh, hhhggg));
+        // console.log(test);
+    </script>
+</body>
+
+</html>
