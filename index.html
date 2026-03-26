@@ -457,7 +457,7 @@
 
             await updateDoc(ref, {
                 players,
-                pot: data.pot + total,
+                pot: data.pot + need, // เปลี่ยน total เป็น need
                 turnIndex: next
             });
         };
