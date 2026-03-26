@@ -38,6 +38,7 @@
     <input id="raiseAmount" type="number" placeholder="Raise">
     <button id="raiseBtn">Raise</button>
     <button id="foldBtn">Fold</button>
+    <button id="allInBtn">All In</button>
 
     <hr>
     <button id="showdown">Showdown</button>
@@ -246,6 +247,40 @@
             }
 
             await updateDoc(ref, {
+                turnIndex: next
+            });
+        };
+
+        // ================= ALL IN =================
+        allInBtn.onclick = async () => {
+            let ref = doc(db, "rooms", currentRoomId);
+            let data = (await getDoc(ref)).data();
+
+            if (!isMyTurn(data)) return alert("ยังไม่ถึงตา");
+
+            let players = [...data.players];
+            let p = players[data.turnIndex];
+
+            let total = p.chips; // 🔥 เอาทั้งหมด
+
+            p.bet += total;
+            p.chips = 0;
+            p.allIn = true;
+
+            let next = nextTurn(players, data.turnIndex);
+
+            if (next === -1) {
+                await updateDoc(ref, {
+                    players,
+                    phase: "showdown"
+                });
+                return;
+            }
+
+            await updateDoc(ref, {
+                players,
+                pot: data.pot + total,
+                currentBet: Math.max(data.currentBet, p.bet),
                 turnIndex: next
             });
         };
