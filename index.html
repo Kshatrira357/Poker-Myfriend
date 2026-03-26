@@ -7,42 +7,99 @@
     <title>Poker Game</title>
 </head>
 
-<body>
-    <h1>Poker Game</h1>
-    <p id="status"></p>
+<body style="margin:0; font-family:sans-serif; background:#0b3d2e; color:white;">
+    <div style="padding:10px; text-align:center;">
+        <h2>🃏 Poker Table</h2>
+        <div id="status"></div>
+        <div>Room: <span id="roomId"></span></div>
+    </div>
 
-    <button id="createRoom">Create Room</button>
-    <p id="roomId"></p>
-    <button id="readyNext">Ready Next Round</button>
+    <!-- โต๊ะ -->
+    <div style="
+    width:100%;
+    height:400px;
+    background:#14532d;
+    border-radius:200px;
+    margin:10px auto;
+    max-width:900px;
+    position:relative;
+    padding:20px;
+">
 
-    <input id="joinRoomInput" placeholder="Room ID">
-    <button id="joinRoom">Join Room</button>
+        <!-- Community -->
+        <div id="community" style="
+        text-align:center;
+        font-size:24px;
+        margin-top:120px;
+    "></div>
+
+        <!-- Pot -->
+        <div id="potDisplay" style="
+        text-align:center;
+        margin-top:10px;
+        font-size:18px;
+        color:gold;
+    "></div>
+
+    </div>
+
+    <!-- Turn -->
+    <div id="turnStatus" style="text-align:center; margin:10px;"></div>
+
+    <!-- Players -->
+    <div id="playerList" style="
+    display:flex;
+    flex-wrap:wrap;
+    justify-content:center;
+    gap:10px;
+    padding:10px;
+"></div>
 
     <hr>
 
-    <h3>Players</h3>
-    <ul id="playerList"></ul>
-
-    <h3 id="community"></h3>
-
-    <p id="potDisplay"></p>
-    <p id="turnStatus"></p>
-
-    <button id="startGame">Start Game</button>
-    <button id="nextPhase">Next Phase</button>
+    <!-- Room Control -->
+    <div style="text-align:center;">
+        <button id="createRoom">Create Room</button>
+        <input id="joinRoomInput" placeholder="Room ID">
+        <button id="joinRoom">Join Room</button>
+        <button id="readyNext">Ready Next</button>
+    </div>
 
     <hr>
 
-    <button id="callBtn">Call</button>
-    <button id="checkBtn">Check</button>
-    <input id="raiseAmount" type="number" placeholder="Raise">
-    <button id="raiseBtn">Raise</button>
-    <button id="foldBtn">Fold</button>
-    <button id="allInBtn">All In</button>
+    <!-- Game Control -->
+    <div style="text-align:center;">
+        <button id="startGame">Start</button>
+        <button id="nextPhase">Next Phase</button>
+        <button id="showdown">Showdown</button>
+    </div>
 
     <hr>
-    <button id="showdown">Showdown</button>
-    <p id="result"></p>
+
+    <!-- Action Bar -->
+    <div style="
+    position:fixed;
+    bottom:0;
+    width:100%;
+    background:#111;
+    padding:10px;
+    display:flex;
+    justify-content:center;
+    gap:10px;
+">
+
+        <button id="foldBtn" style="background:red; color:white;">Fold</button>
+        <button id="checkBtn">Check</button>
+        <button id="callBtn">Call</button>
+
+        <input id="raiseAmount" type="number" placeholder="Raise" style="width:80px;">
+        <button id="raiseBtn">Raise</button>
+
+        <button id="allInBtn" style="background:gold;">ALL IN</button>
+
+    </div>
+
+    <p id="result" style="text-align:center; margin-top:20px;"></p>
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
