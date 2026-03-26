@@ -13,6 +13,7 @@
 
     <button id="createRoom">Create Room</button>
     <p id="roomId"></p>
+    <button id="readyNext">Ready Next Round</button>
 
     <input id="joinRoomInput" placeholder="Room ID">
     <button id="joinRoom">Join Room</button>
@@ -33,6 +34,7 @@
     <hr>
 
     <button id="callBtn">Call</button>
+    <button id="checkBtn">Check</button>
     <input id="raiseAmount" type="number" placeholder="Raise">
     <button id="raiseBtn">Raise</button>
     <button id="foldBtn">Fold</button>
@@ -72,6 +74,7 @@
         const turnStatus = document.getElementById("turnStatus");
 
         const createRoomBtn = document.getElementById("createRoom");
+        const readyNextBtn = document.getElementById("readyNext");
         const joinRoomBtn = document.getElementById("joinRoom");
         const joinRoomInput = document.getElementById("joinRoomInput");
 
@@ -79,6 +82,7 @@
         const nextPhaseBtn = document.getElementById("nextPhase");
 
         const callBtn = document.getElementById("callBtn");
+        const checkBtn = document.getElementById("checkBtn");
         const raiseBtn = document.getElementById("raiseBtn");
         const foldBtn = document.getElementById("foldBtn");
         const raiseAmount = document.getElementById("raiseAmount");
@@ -106,13 +110,16 @@
             do {
                 next = (next + 1) % players.length;
                 count++;
+
                 if (count > players.length) return -1;
 
-            } while (players[next].folded);
+            } while (
+                players[next].folded ||
+                players[next].allIn // ✅ เพิ่มอันนี้
+            );
 
             return next;
         }
-
         // ================= ROOM =================
         createRoomBtn.onclick = async () => {
             const id = genRoom();
@@ -129,7 +136,8 @@
                 startingChips: 1000,
                 smallBlind: 10,
                 bigBlind: 20,
-                dealerIndex: 0
+                dealerIndex: 0,
+                readyNextRound: []
             });
 
             currentRoomId = id;
@@ -156,6 +164,90 @@
 
             currentRoomId = id;
             listen(id);
+        };
+
+        // ================= READY NEXT ROUND =================
+        readyNextBtn.onclick = async () => {
+            let ref = doc(db, "rooms", currentRoomId);
+            let data = (await getDoc(ref)).data();
+
+            let ready = data.readyNextRound || [];
+
+            if (!ready.includes(currentUser.uid)) {
+                ready.push(currentUser.uid);
+            }
+
+            // ทุกคนกดแล้ว
+            if (ready.length === data.players.length) {
+                await startNextRound(ref, data);
+                return;
+            }
+
+            await updateDoc(ref, {
+                readyNextRound: ready
+            });
+        };
+
+        // ================= เริ่มรอบใหม่ =================
+        async function startNextRound(ref, data) {
+            let deck = createDeck(); shuffle(deck);
+
+            // 🔥 dealer หมุน
+            let dealer = ((data.dealerIndex || 0) + 1) % data.players.length;
+
+            let players = data.players.map(p => ({
+                ...p,
+                folded: false,
+                bet: 0,
+                hand: [deck.pop(), deck.pop()]
+            }));
+
+            let sb = (dealer + 1) % players.length;
+            let bb = (dealer + 2) % players.length;
+
+            players[sb].chips -= data.smallBlind;
+            players[sb].bet = data.smallBlind;
+
+            players[bb].chips -= data.bigBlind;
+            players[bb].bet = data.bigBlind;
+
+            await updateDoc(ref, {
+                players,
+                deck,
+                community: [],
+                pot: data.smallBlind + data.bigBlind,
+                currentBet: data.bigBlind,
+                dealerIndex: dealer,
+                turnIndex: (bb + 1) % players.length,
+                phase: "preflop",
+                readyNextRound: []
+            });
+        }
+
+        // ================= CHECK =================
+        checkBtn.onclick = async () => {
+            let ref = doc(db, "rooms", currentRoomId);
+            let data = (await getDoc(ref)).data();
+
+            if (!isMyTurn(data)) return alert("ยังไม่ถึงตา");
+
+            let p = data.players[data.turnIndex];
+
+            // ✅ check ได้ก็ต่อเมื่อ bet เท่ากัน
+            if ((p.bet || 0) !== data.currentBet) {
+                return alert("Check ไม่ได้ ต้อง Call หรือ Fold");
+            }
+
+            let next = nextTurn(data.players, data.turnIndex);
+
+            if (next === -1) {
+                await updateDoc(ref, { phase: "showdown" });
+                return;
+            }
+
+            await updateDoc(ref, {
+                turnIndex: next
+            });
         };
 
         // ================= สร้างสำรับไพ่ =================
@@ -253,15 +345,28 @@
             let p = players[data.turnIndex];
 
             let need = data.currentBet - (p.bet || 0);
-            if (need > p.chips) return alert("ชิปไม่พอ");
+            if (need >= p.chips) {
+                need = p.chips;
+            }
 
             p.chips -= need;
             p.bet += need;
+            p.allIn = (p.chips === 0);
+
+            let next = nextTurn(players, data.turnIndex);
+
+            if (next === -1) {
+                await updateDoc(ref, {
+                    players,
+                    phase: "showdown"
+                });
+                return;
+            }
 
             await updateDoc(ref, {
                 players,
-                pot: data.pot + need,
-                turnIndex: nextTurn(players, data.turnIndex)
+                pot: data.pot + total,
+                turnIndex: next
             });
         };
 
@@ -279,16 +384,28 @@
             let need = data.currentBet - (p.bet || 0);
             let total = need + amt;
 
-            if (total > p.chips) return alert("ชิปไม่พอ");
+            if (total >= p.chips) {
+                total = p.chips; // all-in
+            }
 
             p.chips -= total;
             p.bet += total;
+            p.allIn = (p.chips === 0);
+
+            let next = nextTurn(players, data.turnIndex);
+
+            if (next === -1) {
+                await updateDoc(ref, {
+                    players,
+                    phase: "showdown"
+                });
+                return;
+            }
 
             await updateDoc(ref, {
                 players,
                 pot: data.pot + total,
-                currentBet: p.bet,
-                turnIndex: nextTurn(players, data.turnIndex)
+                turnIndex: next
             });
         };
 
@@ -299,9 +416,31 @@
             let players = [...data.players];
             players[data.turnIndex].folded = true;
 
+            // ✅ เช็คเหลือคนเดียว
+            let alive = players.filter(p => !p.folded);
+
+            if (alive.length === 1) {
+                await updateDoc(ref, {
+                    players,
+                    phase: "showdown"
+                });
+                return;
+            }
+
+            let next = nextTurn(players, data.turnIndex);
+
+            // กันกรณี loop ตาย
+            if (next === -1) {
+                await updateDoc(ref, {
+                    players,
+                    phase: "showdown"
+                });
+                return;
+            }
+
             await updateDoc(ref, {
                 players,
-                turnIndex: nextTurn(players, data.turnIndex)
+                turnIndex: next
             });
         };
 
@@ -388,24 +527,118 @@
             return best;
         }
 
+        function buildSidePots(players) {
+            let active = players
+                .filter(p => !p.folded)
+                .map(p => ({
+                    uid: p.uid,
+                    bet: p.bet
+                }))
+                .sort((a, b) => a.bet - b.bet);
+
+            let pots = [];
+            let prev = 0;
+
+            for (let i = 0; i < active.length; i++) {
+                let level = active[i].bet;
+
+                if (level === prev) continue;
+
+                let group = active.slice(i);
+
+                let amount = (level - prev) * group.length;
+
+                pots.push({
+                    amount,
+                    players: group.map(p => p.uid)
+                });
+
+                prev = level;
+            }
+
+            return pots;
+        }
+
         // ================= SHOWDOWN =================
         showdownBtn.onclick = async () => {
             let ref = doc(db, "rooms", currentRoomId);
             let data = (await getDoc(ref)).data();
 
+            let active = data.players.filter(p => !p.folded);
+
+            // ✅ กรณีเหลือคนเดียว
+            if (active.length === 1) {
+                let winner = active[0];
+
+                let players = data.players.map(p => {
+                    if (p.uid === winner.uid) {
+                        return { ...p, chips: p.chips + data.pot };
+                    }
+                    return p;
+                });
+
+                await updateDoc(ref, {
+                    players,
+                    pot: 0,
+                    phase: "ended"
+                });
+
+                document.getElementById("result").innerText =
+                    "🏆 ผู้ชนะ: " + winner.name;
+
+                return;
+            }
+
+            // ✅ กรณีปกติ (มีหลายคน)
             let results = [];
 
-            data.players.forEach(p => {
-                if (p.folded) return;
-
+            active.forEach(p => {
                 let best = bestHand([...p.hand, ...data.community]);
-                results.push({ name: p.name, ...best });
+                results.push({
+                    uid: p.uid,
+                    name: p.name,
+                    ...best
+                });
             });
 
             results.sort(compareHands);
 
+            let best = results[0];
+
+            // ✅ หา tie
+            let winners = results.filter(r => compareHands(r, best) === 0);
+
+            let pots = buildSidePots(data.players);
+
+            let players = [...data.players];
+
+            pots.forEach(pot => {
+                let contenders = results.filter(r => pot.players.includes(r.uid));
+
+                contenders.sort(compareHands);
+
+                let best = contenders[0];
+
+                let winners = contenders.filter(r => compareHands(r, best) === 0);
+
+                let share = Math.floor(pot.amount / winners.length);
+
+                players = players.map(p => {
+                    if (winners.find(w => w.uid === p.uid)) {
+                        return { ...p, chips: p.chips + share };
+                    }
+                    return p;
+                });
+            });
+
+            await updateDoc(ref, {
+                players,
+                pot: 0,
+                phase: "ended"
+            });
+
             document.getElementById("result").innerText =
-                "🏆 ผู้ชนะ: " + results[0].name;
+                "🏆 ผู้ชนะ: " + winners.map(w => w.name).join(", ");
         };
 
         // ================= LISTENER =================
